@@ -1,0 +1,28 @@
+{
+  "name": "nongnam-v5-api-ready",
+  "version": "5.3.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "next": "14.2.25",
+    "pg": "^8.20.0",
+    "postgres": "^3.4.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "5.7.3"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
