@@ -1,9 +1,22 @@
- "use client";
+"use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  upsertFact, addSchedule, appendChat, getRecentChats,
+  getAllFacts, getActiveSchedules, getRecentMemories,
+  getMeta, setMeta,
+} from "../lib/memoryDB";
+import {
+  applyDelta, calcDelta, detectInteractionType,
+  getAffectionInfo,
+} from "../lib/affectionEngine";
+import { extractFromMessage } from "../lib/factExtractor";
+import {
+  buildRelationshipProfile, buildPersonalityGuideline,
+} from "../lib/relationshipDetector";
 
 type Gender = "female" | "male";
-type Screen = "welcome" | "setup" | "chat" | "outfits" | "books" | "news" | "settings";
+type Screen = "welcome" | "setup" | "chat" | "outfits" | "books" | "settings";
 
 type BookItem = {
   id: string;
@@ -15,17 +28,6 @@ type BookItem = {
   text: string;
   author?: string;
   adult?: boolean;
-};
-
-type NewsItem = {
-  title: string;
-  source: string;
-  link: string;
-  published: string;
-  publishedAt?: string;
-  summary: string;
-  category: string;
-  ageDays?: number;
 };
 type Category = "regular" | "special20";
 
@@ -64,16 +66,6 @@ type Memory = {
   speechRate: number;
   apiConsent: boolean;
   apiMode: ApiMode;
-  userBirthday?: string;
-  userRealName?: string;
-  favoriteColor?: string;
-  favoriteFood?: string;
-  favoritePlace?: string;
-  jobTitle?: string;
-  friendNames?: string[];
-  currentConcerns?: string[];
-  lastInteractionTopic?: string;
-  personalMemories?: { date: number; topic: string; detail: string }[];
 };
 
 type ChatMsg = { role: "user" | "assistant"; text: string; ts: number };
@@ -90,7 +82,7 @@ type ReadingSession = {
   updatedAt: number;
 };
 
-const APP_VERSION = "v6.4-news-fresh-clean";
+const APP_VERSION = "v5.0-api-ready-20260427";
 const BOOKS_KEY = "nongnam_v4_books";
 const OUTFITS_KEY = "nongnam_v4_outfits";
 const MEMORY_KEY = "nongnam_v4_memory";
@@ -118,7 +110,7 @@ const defaultMem: Memory = {
   age20Confirmed: false,
   voiceUnlocked: true,
   speechRate: 1.0,
-  apiConsent: true,
+  apiConsent: false,
   apiMode: "api-light"
 };
 
@@ -295,10 +287,6 @@ export default function Page() {
   const [zoom, setZoom] = useState(1);
   const [bookCat, setBookCat] = useState("ทั้งหมด");
   const [booksData, setBooksData] = useState<BookItem[]>(defaultBooks);
-  const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
-  const [newsLoading, setNewsLoading] = useState(false);
-  const [newsFocus, setNewsFocus] = useState("");
-  const [audioReady, setAudioReady] = useState(false);
   const [outfitOverrides, setOutfitOverrides] = useState<OutfitOverrides>({});
   const [showOwnerModal, setShowOwnerModal] = useState(false);
   const [ownerPinInput, setOwnerPinInput] = useState("");
@@ -306,6 +294,9 @@ export default function Page() {
   const [editingBookId, setEditingBookId] = useState<string | null>(null);
   const [editingOutfitId, setEditingOutfitId] = useState("f_001");
   const [outfitForm, setOutfitForm] = useState<Partial<Outfit>>({});
+  // ── v7 memory engine state ──
+  const [affectionScore, setAffectionScore] = useState<number>(0);
+  const [jealousyMentions, setJealousyMentions] = useState<string[]>([]);
   const [bookForm, setBookForm] = useState<BookItem>({
     id: "",
     title: "",
@@ -318,8 +309,6 @@ export default function Page() {
     adult: false,
   });
   const pressTimer = useRef<any>(null);
-  const recognitionRef = useRef<any>(null);
-  const liveTranscriptRef = useRef("");
   const readingRef = useRef<ReadingSession | null>(null);
 
   useEffect(() => {
@@ -328,8 +317,6 @@ export default function Page() {
       ...defaultMem,
       ...saved,
       voiceUnlocked: saved.voiceUnlocked ?? true,
-      apiConsent: true,
-      apiMode: saved.apiMode && saved.apiMode !== "local" ? saved.apiMode : "api-light",
       purchasedOutfits: Array.from(new Set([...(saved.purchasedOutfits || []), ...FREE_OUTFIT_IDS]))
     };
     setMem(merged);
@@ -345,162 +332,32 @@ export default function Page() {
     setReady(true);
   }, []);
 
-  // PWA Install handling
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallButton, setShowInstallButton] = useState(false);
-
   useEffect(() => {
-    // Force Chrome redirect for better mic support
-    if (typeof window !== "undefined") {
-      const ua = navigator.userAgent;
-      const isChrome = /Chrome/.test(ua) && !/Edge/.test(ua);
-      const isInAppBrowser = /FB_IAB|FBAN|Line|Twitter|Instagram|WeChat|Alipay|QQ|Dingtalk|DingTalk|UCBrowser|KAKAOTALK|NAVER|PUFFIN|OPERA|MAXTHON|QupZilla|Vivaldi|Midori|Waterfox|Pale Moon|Basilisk|IceCat|Iceape|Seamonkey|Palemoon|Cyberfox|Fennec|Iceweasel|GNU IceCat|Conkeror|Dillo|Links|Lynx|w3m|elinks|Netsurf|Amaya|Epiphany|Galeon|Konqueror|Rekonq|Arora|QupZilla|Otter|Falkon|Qutebrowser|Vimb|Surf|Uzbl/.test(ua);
-      
-      if (!isChrome && isInAppBrowser && !sessionStorage.getItem("chromeRedirectAttempted")) {
-        sessionStorage.setItem("chromeRedirectAttempted", "true");
-        const chromeUrl = `intent://${window.location.host}${window.location.pathname}#Intent;scheme=https;package=com.android.chrome;end`;
-        try {
-          window.location.href = chromeUrl;
-        } catch (e) {
-          console.log("Please open this link in Chrome");
-        }
-      }
-    }
-
-    // Handle PWA install prompt
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallButton(true);
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-  }, []);
-
-  const handleInstallApp = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === "accepted") {
-        setDeferredPrompt(null);
-        setShowInstallButton(false);
-      }
-    }
-  };
-
-
-  useEffect(() => {
-    // Force Chrome redirect for better mic support
-    if (typeof window !== "undefined") {
-      const ua = navigator.userAgent;
-      const isChrome = /Chrome/.test(ua) && !/Edge/.test(ua);
-      const isInAppBrowser = /FB_IAB|FBAN|Line|Twitter|Instagram|WeChat|Alipay|QQ|Dingtalk|DingTalk|UCBrowser|KAKAOTALK|NAVER|PUFFIN|OPERA|MAXTHON|QupZilla|Vivaldi|Midori|Waterfox|Pale Moon|Basilisk|IceCat|Iceape|Seamonkey|Palemoon|Cyberfox|Fennec|Iceweasel|GNU IceCat|Conkeror|Dillo|Links|Lynx|w3m|elinks|Netsurf|Amaya|Epiphany|Galeon|Konqueror|Rekonq|Arora|QupZilla|Otter|Falkon|Qutebrowser|Vimb|Surf|Uzbl/.test(ua);
-      
-      if (!isChrome && isInAppBrowser && !sessionStorage.getItem("chromeRedirectAttempted")) {
-        sessionStorage.setItem("chromeRedirectAttempted", "true");
-        const chromeUrl = `intent://${window.location.host}${window.location.pathname}#Intent;scheme=https;package=com.android.chrome;end`;
-        try {
-          window.location.href = chromeUrl;
-        } catch (e) {
-          console.log("Please open this link in Chrome");
-        }
-      }
-    }
-
-    // Handle PWA install prompt
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallButton(true);
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    return () => window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-  }, []);
-
-
-
-  useEffect(() => {
-    // 1. ระบบบังคับเปิดใน Chrome สำหรับ Android (เพื่อใช้ไมค์ได้เสถียร)
-    const ua = window.navigator.userAgent.toLowerCase();
-    const isLine = ua.indexOf("line") > -1;
-    const isFacebook = ua.indexOf("fbav") > -1 || ua.indexOf("fb_iab") > -1;
-    const isAndroid = ua.indexOf("android") > -1;
-    
-    if (isAndroid && (isLine || isFacebook)) {
-      // พยายามใช้ Intent เพื่อเปิด Chrome
-      const currentUrl = window.location.href.replace(/^https?:\/\//, "");
-      window.location.href = `intent://${currentUrl}#Intent;scheme=https;package=com.android.chrome;end`;
-    }
-
-    // 2. เตรียม Web Speech API สำหรับรับเสียงแบบเสถียรขึ้น
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.lang = "th-TH";
-      rec.continuous = false;
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-
-      rec.onstart = () => {
-        liveTranscriptRef.current = "";
-        setStatus("recording");
-        notify("กำลังฟังอยู่ค่ะ พูดได้เลย");
-      };
-
-      rec.onresult = (e: any) => {
-        let latest = liveTranscriptRef.current || "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const transcript = String(e.results[i][0].transcript || "").trim();
-          if (transcript) latest = transcript;
-          if (e.results[i].isFinal && transcript) latest = transcript;
-        }
-        liveTranscriptRef.current = latest.trim();
-      };
-
-      rec.onerror = (e: any) => {
-        const heard = liveTranscriptRef.current.trim();
-        if (heard) {
-          notify(`ได้ยินว่า: ${heard}`);
-          send(heard);
-        } else {
-          notify(`ไมค์มีปัญหา: ${e.error || "ไม่ทราบสาเหตุ"}`);
-        }
-        setStatus("idle");
-      };
-
-      rec.onend = () => {
-        const heard = liveTranscriptRef.current.trim();
-        setStatus("idle");
-        if (heard) {
-          notify(`ได้ยินว่า: ${heard}`);
-          send(heard);
-        } else {
-          notify("ยังไม่ได้ยินข้อความ ลองกดไมค์แล้วพูดอีกครั้งนะคะ");
-        }
-        liveTranscriptRef.current = "";
-      };
-
-      recognitionRef.current = rec;
-    }
-
-    // โหลดรายชื่อเสียงให้พร้อม (สำคัญสำหรับ Chrome และ Android)
-    const loadVoices = () => {
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.getVoices();
-      }
-    };
-    loadVoices();
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-
     const savedBooks = loadJSON<BookItem[]>(BOOKS_KEY, defaultBooks);
     setBooksData(savedBooks?.length ? savedBooks : defaultBooks);
     const savedOutfits = loadJSON<OutfitOverrides>(OUTFITS_KEY, {});
     setOutfitOverrides(savedOutfits || {});
   }, []);
+
+  // ── v7: โหลด affection score + jealousy mentions จาก IndexedDB ──
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      const profile = buildRelationshipProfile(
+        mem.userCallName, mem.relationshipMode, undefined
+      );
+      const stored = await getMeta<number | null>("affection_score", null);
+      const score = typeof stored === "number" ? stored : profile.baselineAffection;
+      const mentions = await getMeta<string[]>("jealousy_mentions", []);
+      if (!cancelled) {
+        setAffectionScore(score);
+        setJealousyMentions(mentions);
+        await setMeta("affection_score", score);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ready, mem.userCallName, mem.relationshipMode]);
 
   useEffect(() => {
     if (!ready) return;
@@ -550,82 +407,8 @@ export default function Page() {
   }
 
   const polite = mem.gender === "male" ? "ครับ" : "ค่ะ";
-  const selfWord = mem.gender === "male" ? "ผม" : (mem.relationshipMode.includes("เมีย") || mem.affectionStyle.includes("เมีย") ? "เมีย" : "น้องน้ำ");
-  const partnerWord = mem.userCallName || "พี่";
+  const selfWord = mem.gender === "male" ? "ผม" : "น้อง";
   const genderLabel = mem.gender === "male" ? "ผู้ชาย" : "ผู้หญิง";
-
-  function bookInviteText(m: Memory = mem) {
-    const call = m.userCallName || "พี่";
-    const p = m.gender === "male" ? "ครับ" : "ค่ะ";
-    const self = m.gender === "male"
-      ? (m.relationshipMode.includes("สามี") || m.affectionStyle.includes("สามี") ? "ผัว" : "ผม")
-      : (m.relationshipMode.includes("เมีย") || m.affectionStyle.includes("เมีย") ? "เมีย" : (m.nongnamName || "น้องน้ำ"));
-    const cats = bookCategories.filter(c => c !== "ทั้งหมด").slice(0, 5).join(" • ");
-    return `${call}อยากฟังแนวไหนดี${p} มีหมวด ${cats} เลือกเล่มมาได้เลย เดี๋ยว${self}อ่านให้ฟัง`;
-  }
-
-  function isBookIntent(msg: string) {
-    return /(อ่านหนังสือ|เล่านิทาน|ชั้นหนังสือ|หนังสือให้ฟัง|อ่านให้ฟัง|ฟังหนังสือ|ฟังนิทาน|มีหนังสือ|มีอะไรอ่าน|อ่านเรื่อง|เรื่องผี|เปิดหนังสือ|เลือกหนังสือ|เล่านิยาย|อ่านนิยาย)/i.test(msg);
-  }
-
-  function isNewsIntent(msg: string) {
-    return /(ข่าว|ข่าววันนี้|ข่าวช่วงนี้|มีอะไรเกิดขึ้น|เกิดอะไรขึ้นบ้าง|ข่าวเด่น|ข่าวกระแส|สรุปข่าว|เล่าข่าว|ข่าวแรงงาน|แรงงานไทย|ข่าวเกาหลี|ข่าวไทยในเกาหลี|อัปเดตแรงงาน|สถานทูต|วีซ่า)/i.test(msg);
-  }
-
-  function newsIntroText(m: Memory = mem) {
-    const call = m.userCallName || "พี่";
-    const p = m.gender === "male" ? "ครับ" : "ค่ะ";
-    const self = m.gender === "male" ? "ผม" : (m.relationshipMode.includes("เมีย") || m.affectionStyle.includes("เมีย") ? "เมีย" : (m.nongnamName || "น้องน้ำ"));
-    return `${call} เดี๋ยว${self}คัดข่าวสด ๆ ให้${p} ข่าวแรงงานไทยถ้ามีอัปเดตใหม่จะดันขึ้นก่อน แต่ถ้าไม่มีจะเอาข่าวกระแสสำคัญมาแทน`;
-  }
-
-  async function loadNews(focus = "") {
-    if (!mem.ownerMode && mem.gems < 3) {
-      sendAssistant(`ข่าวต้องใช้พลังนิดนึง${polite}${mem.userCallName} ใช้ 3 เพชร แต่ตอนนี้เพชรไม่พอนะ`);
-      return;
-    }
-    if (!mem.ownerMode) updateMem({ gems: Math.max(0, mem.gems - 3) });
-    setScreen("news");
-    setNewsLoading(true);
-    setNewsFocus(focus);
-    sendAssistant(newsIntroText(mem));
-    try {
-      const res = await fetch(`/api/news?q=${encodeURIComponent(focus || "แรงงานไทย เกาหลี ข่าวเด่น")}&t=${Date.now()}`, { cache: "no-store" });
-      const data = await res.json();
-      const items = Array.isArray(data.items) ? data.items : [];
-      setNewsItems(items);
-      if (items.length) {
-        setTimeout(() => {
-          sendAssistant(`คัดมาให้ ${items.length} ข่าว${polite}${mem.userCallName} เลือกข่าวที่สนใจ แล้วกดสรุปให้ฟังได้เลย`);
-        }, 350);
-      } else {
-        sendAssistant(`ยังไม่เจอข่าวที่ชัดพอ${polite}${mem.userCallName} ลองค้นคำอื่นไหม`);
-      }
-    } catch {
-      sendAssistant(`ข่าวโหลดไม่สำเร็จ${polite}${mem.userCallName} ลองใหม่อีกทีนะ`);
-    } finally {
-      setNewsLoading(false);
-    }
-  }
-
-  function summarizeNews(item: NewsItem) {
-    if (!item) return;
-    const p = mem.gender === "male" ? "ครับ" : "ค่ะ";
-    const source = item.source ? `จาก ${item.source}` : "จากข่าวต้นฉบับ";
-    const cleanSummary = (item.summary || "")
-      .replace(/\bRead more\b/gi, "")
-      .replace(/\bGoogle News\b/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    const shortSummary = cleanSummary.length > 130 ? `${cleanSummary.slice(0, 130).trim()}…` : cleanSummary;
-    const msg = `${mem.userCallName} สรุปข่าวนี้สั้น ๆ นะ${p} ${item.title} ${source} ใจความคือ ${shortSummary || "มีพาดหัวข่าว แต่รายละเอียดสั้นมาก แนะนำเปิดต้นฉบับดูต่อ"}`;
-
-    setStatus("speaking");
-    forceSpeak(msg);
-    sendAssistant(msg);
-    notify("กำลังอ่านสรุปข่าวให้ฟัง");
-    setScreen("chat");
-  }
 
   function updateMem(patch: Partial<Memory>) {
     setMem(prev => ({ ...prev, ...patch }));
@@ -646,15 +429,10 @@ export default function Page() {
     updateMem({
       setupDone: true,
       selectedOutfit: mem.selectedOutfit || first,
-      purchasedOutfits: Array.from(new Set([...(mem.purchasedOutfits || []), first])),
-      apiConsent: true,
-      apiMode: mem.apiMode === "local" ? "api-light" : mem.apiMode
+      purchasedOutfits: Array.from(new Set([...(mem.purchasedOutfits || []), first]))
     });
     setScreen("chat");
-    setTimeout(() => {
-      const p = mem.gender === "male" ? "ครับ" : "ค่ะ";
-      sendAssistant(`มาแล้วเหรอ${p} 💗`);
-    }, 350);
+    setTimeout(() => sendAssistant(`พี่มาแล้วเหรอ${polite} ${mem.nongnamName}รอคุยกับพี่อยู่เลย 💗`), 250);
   }
 
   function resetProfile() {
@@ -705,119 +483,46 @@ export default function Page() {
     updateMem({ voiceUnlocked: next });
     if (!next) {
       window.speechSynthesis.cancel();
-      setAudioReady(false);
       notify("ปิดเสียงตอบกลับแล้ว");
       return;
     }
-    setAudioReady(true);
-    forceSpeak(mem.gender === "male" ? "เปิดเสียงตอบกลับแล้วครับ" : "เปิดเสียงตอบกลับแล้วค่ะ");
+    const u = new SpeechSynthesisUtterance(mem.gender === "male" ? "เปิดเสียงตอบกลับแล้วครับ" : "เปิดเสียงตอบกลับแล้วค่ะ");
+    u.lang = "th-TH";
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
     notify("เปิดเสียงตอบกลับแล้ว");
   }
 
-  function unlockAudio() {
-    if (!("speechSynthesis" in window)) return notify("เครื่องนี้ไม่รองรับเสียงอ่าน");
-    updateMem({ voiceUnlocked: true });
-    setAudioReady(true);
-    forceSpeak(mem.gender === "male" ? "พร้อมพูดแล้วครับ" : "พร้อมพูดแล้วค่ะ");
-    notify("เปิดเสียงน้องน้ำแล้ว");
-  }
-
   function speak(text: string) {
-    if (!mem.voiceUnlocked) {
-      setStatus("idle");
-      return;
-    }
-    forceSpeak(text);
-  }
-
-  function forceSpeak(text: string) {
-    if (!("speechSynthesis" in window)) {
-      notify("เครื่องนี้ไม่รองรับเสียงอ่าน");
-      return;
-    }
-
-    const clean = text
-      .replace(/[💗💕✨🥺🤗😊🥰📚🎁📰]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!clean) {
-      notify("ไม่มีข้อความให้อ่าน");
-      return;
-    }
-
+    if (!mem.voiceUnlocked) return setStatus("idle");
+    if (!("speechSynthesis" in window)) return setStatus("idle");
     try {
+      const clean = text.replace(/[💗💕✨🥺🤗😊🥰📚🎁]/g, "");
       window.speechSynthesis.cancel();
-
-      const doSpeak = () => {
-        const u = new SpeechSynthesisUtterance(clean);
-        u.lang = "th-TH";
-        u.rate = mem.gender === "male" ? 0.98 : 1.02;
-        u.pitch = mem.gender === "male" ? 0.72 : 1.10;
-
-        const voices = window.speechSynthesis.getVoices?.() || [];
-        const thVoices = voices.filter(v => v.lang?.toLowerCase().includes("th"));
-        const maleVoice = thVoices.find(v => /male|man|ชาย|นรินทร์|พัฒน์/i.test(v.name));
-        const femaleVoice = thVoices.find(v => /female|woman|หญิง|กัญญา|อัจฉรา/i.test(v.name));
-
-        if (mem.gender === "male") {
-          if (maleVoice) u.voice = maleVoice;
-          else if (thVoices[1]) u.voice = thVoices[1];
-          else if (thVoices[0]) u.voice = thVoices[0];
-        } else {
-          if (femaleVoice) u.voice = femaleVoice;
-          else if (thVoices[0]) u.voice = thVoices[0];
-        }
-
-        u.onstart = () => setStatus("speaking");
-        u.onend = () => setStatus("idle");
-        u.onerror = () => {
-          setStatus("idle");
-          notify("เสียงไม่ออก ลองแตะปุ่มอ่านอีกครั้ง หรือเช็กว่าเปิดเสียงเครื่องอยู่");
-        };
-
-        window.speechSynthesis.speak(u);
-
-        // Safari sometimes pauses speechSynthesis automatically.
-        window.speechSynthesis.resume();
-        setTimeout(() => window.speechSynthesis.resume(), 120);
-        setTimeout(() => window.speechSynthesis.resume(), 600);
-        setTimeout(() => {
-          if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-            // Last-resort retry without custom voice.
-            const retry = new SpeechSynthesisUtterance(clean);
-            retry.lang = "th-TH";
-            retry.rate = mem.gender === "male" ? 0.98 : 1.02;
-            retry.pitch = mem.gender === "male" ? 0.72 : 1.10;
-            retry.onstart = () => setStatus("speaking");
-            retry.onend = () => setStatus("idle");
-            window.speechSynthesis.speak(retry);
-            window.speechSynthesis.resume();
-          }
-        }, 900);
-      };
-
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = "th-TH";
+      u.rate = mem.gender === "male" ? 0.98 : 1.03;
+      u.pitch = mem.gender === "male" ? 0.72 : 1.12;
       const voices = window.speechSynthesis.getVoices?.() || [];
-      if (!voices.length && "onvoiceschanged" in window.speechSynthesis) {
-        window.speechSynthesis.onvoiceschanged = () => {
-          window.speechSynthesis.onvoiceschanged = null;
-          doSpeak();
-        };
-        // Also try immediately because some browsers never fire voiceschanged.
-        doSpeak();
-      } else {
-        doSpeak();
-      }
+      const thVoices = voices.filter(v => v.lang?.toLowerCase().includes("th"));
+      const maleVoice = thVoices.find(v => /male|man|ชาย/i.test(v.name));
+      const femaleVoice = thVoices.find(v => /female|woman|หญิง/i.test(v.name));
+      if (mem.gender === "male" && maleVoice) u.voice = maleVoice;
+      else if (mem.gender === "female" && femaleVoice) u.voice = femaleVoice;
+      else if (thVoices[0]) u.voice = thVoices[0];
+      u.onstart = () => setStatus("speaking");
+      u.onend = () => setStatus("idle");
+      u.onerror = () => setStatus("idle");
+      window.speechSynthesis.speak(u);
+      setTimeout(() => window.speechSynthesis.resume(), 250);
     } catch {
       setStatus("idle");
-      notify("อ่านเสียงไม่สำเร็จ");
     }
   }
 
   function sendAssistant(text: string) {
     setChat(prev => [...prev, { role: "assistant" as const, text, ts: Date.now() }].slice(-8));
-    if (mem.voiceUnlocked) forceSpeak(text);
-    else setStatus("idle");
+    speak(text);
   }
 
   function localReply(msg: string) {
@@ -827,9 +532,9 @@ export default function Page() {
     const p = polite;
     const s = selfWord;
 
-    if (isBookIntent(msg)) {
+    if (/อ่านหนังสือ|เล่านิทาน|ชั้นหนังสือ|หนังสือให้ฟัง|อ่านให้ฟัง|เรื่องผี/.test(msg)) {
       setScreen("books");
-      return bookInviteText(mem);
+      return `ได้เลย${p}${user} พี่เลือกหมวดได้เลยนะ มีหมวด ${bookCategories.filter(c=>c!=="ทั้งหมด").join(" • ")} ถ้าพี่ชอบเล่มไหน ${name}จะอ่านให้ฟังเอง 📚`;
     }
     if (/เหนื่อย|ล้า|หมดแรง/.test(msg)) {
       return mem.gender === "male"
@@ -877,130 +582,6 @@ export default function Page() {
     setChat(prev => [...prev, { role: "user" as const, text: msg, ts: Date.now() }].slice(-8));
     setInput("");
 
-    // --- Memory Extraction Logic ---
-    const updatedMem = { ...mem };
-
-    // 1. Extract User Call Name
-    if (!updatedMem.userCallName || updatedMem.userCallName === "พี่") {
-      const nameMatch = msg.match(/(?:ฉัน|ผม|พี่)?\s*(?:ชื่อเล่น|ชื่อ)\s*(?:คือ|ว่า|เป็น)?\s*([ก-ฮะ-์A-Za-z]+)/i);
-      if (nameMatch && nameMatch[1]) {
-        updatedMem.userCallName = nameMatch[1].trim();
-        notify(`จำได้แล้วค่ะ พี่${updatedMem.userCallName} 😊`);
-      }
-    }
-
-    // 2. Extract User Birthday
-    if (!updatedMem.userBirthday) {
-      const birthdayMatch = msg.match(/(เกิดวันที่|วันเกิดฉันคือ|ฉันเกิด)\\s*(\\d{1,2}\\s*(มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)\\s*\\d{4})/i);
-      if (birthdayMatch && birthdayMatch[2]) {
-        updatedMem.userBirthday = birthdayMatch[2];
-        notify(`ว้าว! ${updatedMem.nongnamName} จำวันเกิดพี่ ${updatedMem.userBirthday} ไว้แล้วนะคะ เดี๋ยวมีเซอร์ไพรส์แน่นอน! 🎂`);
-      }
-    }
-
-    // 3. Extract Favorite Color
-    if (!updatedMem.favoriteColor) {
-      const colorMatch = msg.match(/(ชอบสี|สีที่ชอบคือ)\\s*([ก-ฮะ-์]+)/i);
-      if (colorMatch && colorMatch[2]) {
-        updatedMem.favoriteColor = colorMatch[2];
-        notify(`สี ${updatedMem.favoriteColor} สวยจังเลยค่ะ ${updatedMem.nongnamName} จำไว้แล้วนะ!`);
-      }
-    }
-
-    // 4. Extract Favorite Food
-    if (!updatedMem.favoriteFood) {
-      const foodMatch = msg.match(/(ชอบกิน|อาหารที่ชอบคือ)\\s*([ก-ฮะ-์]+)/i);
-      if (foodMatch && foodMatch[2]) {
-        updatedMem.favoriteFood = foodMatch[2];
-        notify(`น่าอร่อยจังเลยค่ะ ${updatedMem.nongnamName} จำได้แล้วว่าพี่ชอบกิน ${updatedMem.favoriteFood} 😋`);
-      }
-    }
-
-    // 5. Extract Job Title
-    if (!updatedMem.jobTitle) {
-      const jobMatch = msg.match(/(ทำงานเป็น|อาชีพคือ)\\s*([ก-ฮะ-์]+)/i);
-      if (jobMatch && jobMatch[2]) {
-        updatedMem.jobTitle = jobMatch[2];
-        notify(`โห ${updatedMem.jobTitle} เลยเหรอคะ ${updatedMem.nongnamName} ว่าพี่เก่งจังเลย!`);
-      }
-    }
-
-    // 6. Extract Friend Names (simple, can be improved with array)
-    const friendMatch = msg.match(/(เพื่อนชื่อ|มีเพื่อนชื่อ)\\s*([ก-ฮะ-์]+)/i);
-    if (friendMatch && friendMatch[2]) {
-      if (!updatedMem.friendNames) updatedMem.friendNames = [];
-      if (!updatedMem.friendNames.includes(friendMatch[2])) {
-        updatedMem.friendNames.push(friendMatch[2]);
-        notify(`โอเคค่ะ ${updatedMem.nongnamName} จำได้แล้วว่าพี่มีเพื่อนชื่อ ${friendMatch[2]} 😊`);
-      }
-    }
-
-    // 7. Extract Current Concerns (improved)
-    const concernMatch = msg.match(/(มีปัญหาเรื่อง|เครียดเรื่อง|ทุกข์ใจเรื่อง|ปวดหัวเรื่อง|หงวดใจเรื่อง|เศร้าเรื่อง)\s*([ก-ฮะ-์\s]+?)(?=\s*[\.,!?]|$)/i);
-    if (concernMatch && concernMatch[2]) {
-      if (!updatedMem.currentConcerns) updatedMem.currentConcerns = [];
-      const concern = concernMatch[2].trim();
-      if (!updatedMem.currentConcerns.includes(concern)) {
-        updatedMem.currentConcerns.push(concern);
-        notify(`${updatedMem.nongnamName} จดจำเรื่อง ${concern} ของพี่ไว้แล้วนะคะ ถ้าเรื่องนี้ดีขึ้นบอกหนูด้วยนะ 💕`);
-      }
-    }
-
-    // 8. Extract Favorite Place
-    if (!updatedMem.favoritePlace) {
-      const placeMatch = msg.match(/(ชอบไปที่|สถานที่ที่ชอบคือ|ชอบเที่ยวที่)\s*([ก-ฮะ-์\s]+?)(?=\s*[\.,!?]|$)/i);
-      if (placeMatch && placeMatch[2]) {
-        updatedMem.favoritePlace = placeMatch[2].trim();
-        notify(`ว้าว ${updatedMem.favoritePlace} เหรอคะ ที่นั่นสวยจังเลย หนูจำไว้แล้วนะ!`);
-      }
-    }
-
-    // 9. Extract Personality Traits
-    const personalityMatch = msg.match(/(ฉันเป็นคนที่|ฉันเป็นแบบ|ฉันชอบ|นิสัยของฉัน)\s*([ก-ฮะ-์\s]+?)(?=\s*[\.,!?]|$)/i);
-    if (personalityMatch && personalityMatch[2]) {
-      if (!updatedMem.personalMemories) updatedMem.personalMemories = [];
-      updatedMem.personalMemories.push({
-        date: Date.now(),
-        topic: "personality",
-        detail: personalityMatch[2].trim()
-      });
-      notify(`อ๋อ พี่เป็นแบบนี้นี่เอง หนูจำไว้แล้วค่ะ 😊`);
-    }
-
-    // 10. Extract Relationship/Family Info
-    const familyMatch = msg.match(/(มีพี่|มีน้อง|พ่อแม่|ครอบครัว|แฟน|คนรัก)\s*([ก-ฮะ-์\s]+?)(?=\s*[\.,!?]|$)/i);
-    if (familyMatch && familyMatch[2]) {
-      if (!updatedMem.personalMemories) updatedMem.personalMemories = [];
-      updatedMem.personalMemories.push({
-        date: Date.now(),
-        topic: "family",
-        detail: familyMatch[0]
-      });
-      notify(`หนูจำได้ว่า ${familyMatch[2].trim()} ของพี่ค่ะ 💕`);
-    }
-
-    // Update memory state if anything changed
-    if (JSON.stringify(mem) !== JSON.stringify(updatedMem)) {
-      updateMem(updatedMem);
-    }
-    // --- End Memory Extraction Logic ---
-
-    // Book intent must be handled by the app, not by AI.
-    // If user asks for reading/story/book, open bookshelf and invite them to choose.
-    if (isBookIntent(msg)) {
-      setStatus("idle");
-      setScreen("books");
-      const invite = bookInviteText(updatedMem);
-      setTimeout(() => sendAssistant(invite), 150);
-      return;
-    }
-
-    if (isNewsIntent(msg)) {
-      setStatus("idle");
-      setTimeout(() => loadNews(msg), 150);
-      return;
-    }
-
     if (/หยุดอ่าน|พักอ่าน|หยุดไว้ก่อน|pause/i.test(msg)) {
       pauseReading();
       sendAssistant(`ได้เลย${polite}${mem.userCallName} ${mem.nongnamName}หยุดหนังสือไว้ให้แล้ว กลับมาค่อยฟังต่อนะ`);
@@ -1018,92 +599,105 @@ export default function Page() {
       return;
     }
 
-    // ตรวจสอบคำถามยากและเตือนก่อนหักเพชร
-    const hardKeywords = /วีซ่า|กฎหมาย|ภาษี|สัญญา|ข้อมูล|ค้นหา|วิจัย|วิเคราะห์|ปรึกษา|คำแนะนำ|แนวทาง|วิธี|ขั้นตอน/i;
-    const isHardQuestion = hardKeywords.test(msg);
-    
-    if (!mem.ownerMode) {
-      let cost = 0;
-      if (mem.apiMode === "api-search") cost = 3;
-      else if (mem.apiMode === "api-deep") cost = 2;
-      else if (mem.apiMode === "api-light") cost = 1;
-      
-      // ถ้าเป็นคำถามยาก ให้เตือนก่อน
-      if (isHardQuestion && cost > 0 && mem.gems < cost * 2) {
-        const p = mem.gender === "male" ? "ครับ" : "ค่ะ";
-        sendAssistant(`เรื่องนี้ยากจังพี่ ต้องใช้พลังงานเยอะหน่อยนะ (เสียเพชร ${cost} เม็ด) พี่มีเพชรแค่ ${mem.gems} เม็ดเลย พี่โอเคยไหมคะ ถ้าพี่โอเคย บอกหนูอีกที่นะ เดี๋ยวหนูไปหาข้อมูลใหม่${p}`);
-        setStatus("idle");
-        return;
-      }
-      
-      if (cost > 0) updateMem({ gems: Math.max(0, mem.gems - cost) });
-    }
+    if (!mem.ownerMode) updateMem({ gems: Math.max(0, mem.gems - 1) });
     setStatus("thinking");
-    if (false) {
-      setTimeout(() => {
+
+    // ── v7: extract facts → save IndexedDB → call /api/chat with memory ──
+    (async () => {
+      try {
+        // 1. extract facts/schedules/mentions
+        const extracted = extractFromMessage(msg);
+        for (const f of extracted.facts) await upsertFact(f);
+        for (const s of extracted.schedules) await addSchedule(s);
+        let nextMentions = jealousyMentions;
+        if (extracted.mentions.length) {
+          nextMentions = Array.from(new Set([...jealousyMentions, ...extracted.mentions])).slice(-20);
+          setJealousyMentions(nextMentions);
+          await setMeta("jealousy_mentions", nextMentions);
+        }
+        await appendChat({ role: "user", text: msg, ts: Date.now() });
+
+        // 2. update affection score
+        const interaction = detectInteractionType(msg);
+        const newScore = applyDelta(affectionScore, calcDelta(interaction));
+        if (newScore !== affectionScore) {
+          setAffectionScore(newScore);
+          await setMeta("affection_score", newScore);
+        }
+
+        // 3. build profile + load memory for system prompt
+        const profile = buildRelationshipProfile(
+          mem.userCallName, mem.relationshipMode, newScore
+        );
+        const guideline = buildPersonalityGuideline(profile);
+        const [allFacts, schedules, memories] = await Promise.all([
+          getAllFacts(),
+          getActiveSchedules(),
+          getRecentMemories(6),
+        ]);
+
+        const apiMemory = {
+          gender: mem.gender,
+          nongnamName: mem.nongnamName,
+          userCallName: mem.userCallName,
+          relationshipMode: mem.relationshipMode,
+          sulkyLevel: mem.sulkyLevel,
+          jealousLevel: mem.jealousLevel,
+          intimateTone: mem.affectionStyle,
+          // v7 extras
+          affectionScore: newScore,
+          affectionLabel: profile.affectionLabel,
+          relationshipKind: profile.kind,
+          personalityHint: profile.personalityHint,
+          personalityGuideline: guideline,
+          facts: allFacts.slice(-30).map(f => ({ category: f.category, key: f.key, value: f.value })),
+          schedules: schedules.map(s => ({ type: s.type, label: s.label, time: s.time })),
+          recentMemories: memories.map(m => ({ topic: m.topic, detail: m.detail })),
+          allowFlirt: profile.allowFlirt,
+          allowJealousy: profile.allowJealousy,
+          allowExplicit: profile.allowExplicit,
+          jealousyMentions: nextMentions.slice(-5),
+        };
+
+        // 4. call /api/chat (or fallback to localReply if API fails)
+        let reply: string;
+        try {
+          const r = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: msg,
+              memory: apiMemory,
+              recent: chat.slice(-6),
+              mode: mem.apiMode,
+            }),
+          });
+          const data = await r.json();
+          reply = data?.reply || localReply(msg);
+        } catch {
+          reply = localReply(msg);
+        }
+
+        await appendChat({ role: "assistant", text: reply, ts: Date.now() });
+        sendAssistant(reply);
+        setStatus("idle");
+      } catch {
+        // safety: ถ้า memory engine พัง ใช้ localReply
         const reply = localReply(msg);
         sendAssistant(reply);
         setStatus("idle");
-      }, 450);
-    } else {
-      fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: msg,
-          memory: {
-            gender: updatedMem.gender,
-            nongnamName: updatedMem.nongnamName,
-            userCallName: updatedMem.userCallName,
-            personality: updatedMem.personalityStyle,
-            relationshipMode: updatedMem.relationshipMode,
-            sulkyLevel: updatedMem.sulkyLevel,
-            jealousLevel: updatedMem.jealousLevel,
-            intimateTone: updatedMem.affectionStyle,
-            userRealName: updatedMem.userRealName || updatedMem.userCallName,
-            userBirthday: updatedMem.userBirthday,
-            favoriteColor: updatedMem.favoriteColor,
-            favoriteFood: updatedMem.favoriteFood,
-            favoritePlace: updatedMem.favoritePlace,
-            jobTitle: updatedMem.jobTitle,
-            friendNames: updatedMem.friendNames,
-            currentConcerns: updatedMem.currentConcerns,
-            personalMemories: updatedMem.personalMemories
-          },
-          recent: chat.map(c => ({ role: c.role, text: c.text })),
-          mode: mem.apiMode
-        })
-      })
-      .then(r => r.json())
-      .then(data => {
-        sendAssistant(data.reply || "อื้อค่ะพี่ น้ำฟังอยู่ แต่ขอตอบใหม่อีกทีนะ");
-      })
-      .catch(() => {
-        sendAssistant("น้ำหลุดแป๊บนึงค่ะพี่ ลองพูดใหม่อีกทีนะ");
-      })
-      .finally(() => setStatus("idle"));
-    }
+      }
+    })();
   }
 
   function pressMicStart() {
-    if (!recognitionRef.current) return notify("Browser นี้ไม่รองรับการสั่งงานด้วยเสียงค่ะ กรุณาเปิดใน Chrome/Safari ล่าสุด");
-    try {
-      window.speechSynthesis.cancel();
-      if (status === "recording") {
-        recognitionRef.current.stop();
-        return;
-      }
-      liveTranscriptRef.current = "";
-      recognitionRef.current.start();
-    } catch (e) {
-      console.error(e);
-      notify("เปิดไมค์ไม่ได้ ลองกดอีกครั้ง หรือเช็กสิทธิ์ไมค์ในเบราว์เซอร์");
-      setStatus("idle");
-    }
+    setStatus("recording");
+    pressTimer.current = setTimeout(() => {}, 999999);
   }
   function pressMicEnd() {
-    // เวอร์ชันนี้ใช้แบบแตะครั้งแรกเริ่มฟัง แตะอีกครั้งหยุดส่ง ไม่ต้องกดค้าง
-    return;
+    clearTimeout(pressTimer.current);
+    setStatus("idle");
+    notify("เดโมนี้ยังไม่ส่งเสียงจริง ให้พิมพ์ทดสอบก่อนนะคะ");
   }
 
   function buyOrUse(o: Outfit) {
@@ -1261,7 +855,7 @@ export default function Page() {
     if (!mem.ownerMode) updateMem({ gems: mem.gems - b.price });
     setScreen("chat");
     setTimeout(() => {
-      sendAssistant(`${mem.userCallName}เลือกเรื่องนี้ใช่ไหม${polite} เดี๋ยว${selfWord}อ่าน “${b.title}” ให้ฟังนะ`);
+      sendAssistant(`ได้เลย${polite}${mem.userCallName} เดี๋ยว${mem.nongnamName}อ่านเรื่อง “${b.title}” ให้ฟังนะ`);
       setTimeout(() => {
         setChat(prev => [...prev, { role: "assistant" as const, text: b.text ? b.text.slice(0, 700) + (b.text.length > 700 ? "..." : "") : "เล่มนี้ยังไม่มีเนื้อหา", ts: Date.now() }].slice(-8));
         startReadingBook(b, startIndex);
@@ -1468,9 +1062,6 @@ export default function Page() {
               <button onClick={()=>setZoom(z=>Math.max(.85, z-.15))}>－</button>
             </div>
             <div className="status">{status==="thinking"?"น้องน้ำกำลังคิด...":status==="speaking"?"น้องน้ำกำลังพูด...":status==="recording"?"กำลังฟังเสียง...":" "}</div>
-            {mem.voiceUnlocked && !audioReady && (
-              <button className="audioUnlock" onClick={unlockAudio}>🔊 แตะเพื่อเปิดเสียงน้องน้ำ</button>
-            )}
             {reading && (
               <div className="readingPanel">
                 <div className="readingTitle">📖 {reading.title}</div>
@@ -1498,10 +1089,9 @@ export default function Page() {
               <button onClick={()=>send("น้องน้ำคิดถึงพี่ไหม")}>คิดถึง</button>
               <button onClick={()=>send("กินข้าวหรือยัง")}>ทักเรื่องข้าว</button>
               <button onClick={()=>send("อ่านหนังสือให้ฟังหน่อย")}>อ่านหนังสือ</button>
-              <button onClick={()=>send("ช่วงนี้มีข่าวอะไรน่าสนใจบ้าง")}>ข่าววันนี้</button>
             </div>
             <div className="composer">
-              <button className={`mic ${status==="recording" ? "recording" : ""}`} onClick={pressMicStart}>{status==="recording" ? "🔴" : "🎙️"}</button>
+              <button className="mic" onMouseDown={pressMicStart} onMouseUp={pressMicEnd} onTouchStart={pressMicStart} onTouchEnd={pressMicEnd}>🎙️</button>
               <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}} placeholder={`พิมพ์คุยกับ${mem.nongnamName}...`}/>
               <button className="send" onClick={()=>send()}>➤</button>
             </div>
@@ -1575,39 +1165,6 @@ export default function Page() {
           </div>
         )}
 
-        {screen === "news" && (
-          <div className="list newsScreen">
-            <button className="back" onClick={()=>setScreen("chat")}>←</button>
-            <h1>ข่าววันนี้</h1>
-            <p>{mem.userCallName} ข่าวหน้านี้จะพยายามคัดข่าวสดก่อน ข่าวแรงงานไทย/คนไทยในเกาหลีจะขึ้นเมื่อมีอัปเดตใหม่ ไม่เอาข่าวเก่ามายัดให้รก</p>
-            <div className="readerSpeed newsTabs">
-              <span>เลือกหมวด</span>
-              <button className="on" onClick={()=>loadNews("ข่าวเด่น เกาหลีใต้ ล่าสุด แรงงานไทย")}>เด่นวันนี้</button>
-              <button onClick={()=>loadNews("แรงงานต่างชาติ เกาหลีใต้ วีซ่า คนไทย")}>แรงงาน/วีซ่า</button>
-              <button onClick={()=>loadNews("ข่าวเกาหลีใต้ ล่าสุด กระแส เศรษฐกิจ")}>กระแสเกาหลี</button>
-            </div>
-            {newsLoading && <div className="resumeBox">กำลังไล่ข่าวใหม่ ๆ ให้อยู่ รอแป๊บนึงนะ...</div>}
-            {!newsLoading && !newsItems.length && <div className="resumeBox">ยังไม่มีข่าวในหน้านี้ กดหมวดด้านบนเพื่อค้นข่าวใหม่ได้เลย</div>}
-            <div className="newsList cleanNews">
-              {newsItems.map((n, i) => (
-                <div className="newsItem" key={`${n.link}-${i}`}>
-                  <div className="newsNumber">{i+1}</div>
-                  <div className="newsBody">
-                    <div className="newsMeta"><span>{n.category}</span><b>{n.source}</b></div>
-                    <h3>{n.title}</h3>
-                    <p>{n.summary}</p>
-                    <div className="newsFooter">{n.ageDays !== undefined ? `${n.ageDays} วันที่ผ่านมา` : (n.published || "ข่าวล่าสุด")}</div>
-                    <div className="newsActions">
-                      <button onClick={()=>summarizeNews(n)}>สรุปให้ฟัง</button>
-                      {n.link && <button className="ghost" onClick={()=>window.open(n.link, "_blank")}>ต้นฉบับ</button>}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
 
         {screen === "settings" && (
           <div className="setup settings">
@@ -1617,12 +1174,6 @@ export default function Page() {
               <button onClick={resetProfile}>รีเซ็ตข้อมูลตั้งค่า</button>
               <button onClick={()=>{setChat([]); localStorage.removeItem(CHAT_KEY); notify("ล้างแชตแล้ว");}}>ล้างประวัติแชต</button>
 
-              <div className="apiSettingBox">
-                <b>โหมดคุยกับ AI (OpenAI)</b>
-                <label><input type="checkbox" checked={mem.apiConsent} onChange={e=>updateMem({apiConsent:e.target.checked})}/> เปิดใช้งาน AI ตอบคำถาม (หักเพชร)</label>
-                <small>เปิดไว้ น่าน่า จะใช้ AI สมองปกติที่เหมาะสมกับคำถาม น่าน่าจะหักเพชรตามความยากของคำถามนั้นเอง</small>
-              </div>
-
               {mem.ownerMode && (
                 <>
                   <div className="owner">OWNER MODE เปิดอยู่</div>
@@ -1630,6 +1181,16 @@ export default function Page() {
                     <button onClick={()=>setOwnerSection(ownerSection==='outfits' ? 'none' : 'outfits')}>จัดการชุด</button>
                     <button onClick={()=>setOwnerSection(ownerSection==='books' ? 'none' : 'books')}>จัดการหนังสือ</button>
                     <button onClick={toggleVoice}>{mem.voiceUnlocked ? "ปิดเสียงตอบกลับ" : "เปิดเสียงตอบกลับ"}</button>
+                    <div className="apiSettingBox">
+                      <b>โหมด AI/API</b>
+                      <label><input type="checkbox" checked={mem.apiConsent} onChange={e=>updateMem({apiConsent:e.target.checked})}/> อนุญาตให้ใช้โหมดคำถามลึกโดยไม่ถามซ้ำ</label>
+                      <select value={mem.apiMode} onChange={e=>updateMem({apiMode:e.target.value as ApiMode})}>
+                        <option value="api-light">คุยฉลาด ประหยัด</option>
+                        <option value="api-deep">วิเคราะห์ลึก</option>
+                        <option value="api-search">ค้นข้อมูล/คำถามจริงจัง</option>
+                      </select>
+                      <small>อ่านหนังสือไม่ใช้ API ส่วนคำถามลึกจะหักเพชรตามระดับ</small>
+                    </div>
                     <button onClick={()=>updateMem({gems: mem.gems + 10000})}>เติมเพชรทดสอบ +10000</button>
                     <button className="ghostBtn" onClick={exitOwnerMode}>ออกจาก OWNER MODE</button>
                   </div>
