@@ -6,7 +6,6 @@
 export interface DeepMemory {
   // Basic identity
   user_id?: string; // Added for database linkage
-  externalId?: string; // External ID for database linkage (e.g., Line ID)
   userRealName?: string;
   userCallName?: string;
   userBirthday?: string;
@@ -53,8 +52,6 @@ export interface DeepMemory {
   lastActiveAt?: string; // Timestamp of last user interaction
   lastProactiveMessageAt?: string; // Timestamp of last proactive message sent by Nong Nam
   apiMode?: string; // API mode (for compatibility)
-  diamonds?: number; // User's current diamond balance
-  equippedOutfitId?: string; // ID of the currently equipped outfit
 
 
   // Conversation Context
