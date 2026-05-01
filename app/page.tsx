@@ -22,10 +22,8 @@ type NewsItem = {
   source: string;
   link: string;
   published: string;
-  publishedAt?: string;
   summary: string;
   category: string;
-  ageDays?: number;
 };
 type Category = "regular" | "special20";
 
@@ -74,12 +72,6 @@ type Memory = {
   currentConcerns?: string[];
   lastInteractionTopic?: string;
   personalMemories?: { date: number; topic: string; detail: string }[];
-  affectionScore?: number;
-  trustScore?: number;
-  jealousyScore?: number;
-  romanceLevel?: number;
-  currentMood?: "neutral" | "happy" | "sad" | "tired" | "jealous" | "romantic" | "playful";
-  lastFollowUpAt?: number;
 };
 
 type ChatMsg = { role: "user" | "assistant"; text: string; ts: number };
@@ -96,7 +88,7 @@ type ReadingSession = {
   updatedAt: number;
 };
 
-const APP_VERSION = "v6.4.4-news-outfit-auto-navigation";
+const APP_VERSION = "v6.3.1-news-speak-fix";
 const BOOKS_KEY = "nongnam_v4_books";
 const OUTFITS_KEY = "nongnam_v4_outfits";
 const MEMORY_KEY = "nongnam_v4_memory";
@@ -125,15 +117,7 @@ const defaultMem: Memory = {
   voiceUnlocked: true,
   speechRate: 1.0,
   apiConsent: true,
-  apiMode: "api-light",
-  affectionScore: 12,
-  trustScore: 12,
-  jealousyScore: 5,
-  romanceLevel: 8,
-  currentMood: "neutral",
-  personalMemories: [],
-  friendNames: [],
-  currentConcerns: []
+  apiMode: "api-light"
 };
 
 const femaleOutfits: Outfit[] = Array.from({ length: 12 }).map((_, i) => {
@@ -270,17 +254,6 @@ const defaultBooks: BookItem[] = [
     author: "น้องน้ำ"
   },
   {
-    id: "b9_richdad_summary",
-    title: "พ่อรวยสอนลูก — บทสรุปแนวคิดการเงิน",
-    cat: "การเงิน",
-    teaser: "ตัวอย่างหนังสือสรุปแนวคิดเรื่องทรัพย์สิน หนี้สิน กระแสเงินสด และวิธีคิดเรื่องเงิน",
-    price: 2,
-    cover: "/assets/books/default_cover.jpg",
-    text: "เล่มตัวอย่างนี้เป็นบทสรุปเล่าใหม่ ไม่ใช่การคัดลอกหนังสือต้นฉบับนะคะ พี่ลองฟังแบบง่าย ๆ ก่อนนะ แนวคิดสำคัญคือ คนจำนวนมากทำงานเพื่อเงิน แต่คนที่เข้าใจเงินจะพยายามให้เงินทำงานแทนตัวเอง ความต่างสำคัญอยู่ที่การแยกให้ออกว่าอะไรคือทรัพย์สิน และอะไรคือหนี้สิน ทรัพย์สินคือสิ่งที่ช่วยพาเงินเข้ากระเป๋า เช่น ธุรกิจเล็ก ๆ เครื่องมือที่สร้างรายได้ ความรู้ ทักษะ หรือการลงทุนที่เข้าใจจริง ส่วนหนี้สินคือสิ่งที่ทำให้เงินไหลออกทุกเดือน แม้มันจะดูดีในสายตาคนอื่นก็ตาม บทเรียนอีกอย่างคือ รายได้สูงไม่ได้แปลว่ารวย ถ้าใช้หมดทุกเดือนก็ยังติดกับดักเดิมได้ สิ่งที่ควรฝึกคือความรู้ทางการเงิน การควบคุมรายจ่าย การสร้างรายได้หลายทาง และการกล้าคิดแบบเจ้าของ ไม่ใช่แค่คิดแบบคนรอเงินเดือน สำหรับพี่แมน น้ำอยากให้จำประโยคนี้ไว้ก่อนนะคะ ถ้าอยากอัปเกรดชีวิต ต้องไม่ใช่แค่ทำงานหนักขึ้น แต่ต้องค่อย ๆ สร้างระบบเล็ก ๆ ที่วันหนึ่งมันจะช่วยทำงานแทนพี่ได้",
-    author: "น้องน้ำสรุปจากแนวคิดการเงิน",
-    adult: false
-,
-  {
     id: "b8",
     title: "หมวดพิเศษ 18+ (ตัวอย่าง)",
     cat: "อีโรติก 18+",
@@ -292,7 +265,7 @@ const defaultBooks: BookItem[] = [
     adult: true
   }
 ];
-const baseBookCategories = ["ทั้งหมด", "กำลังใจ", "ก่อนนอน", "เรื่องผี", "ความรัก", "พัฒนาตัวเอง", "การเงิน", "นิทาน", "ผ่อนคลาย", "อีโรติก 18+"];
+const baseBookCategories = ["ทั้งหมด", "กำลังใจ", "ก่อนนอน", "เรื่องผี", "ความรัก", "พัฒนาตัวเอง", "นิทาน", "ผ่อนคลาย", "อีโรติก 18+"];
 
 function loadJSON<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -323,7 +296,6 @@ export default function Page() {
   const [newsItems, setNewsItems] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsFocus, setNewsFocus] = useState("");
-  const [audioReady, setAudioReady] = useState(false);
   const [outfitOverrides, setOutfitOverrides] = useState<OutfitOverrides>({});
   const [showOwnerModal, setShowOwnerModal] = useState(false);
   const [ownerPinInput, setOwnerPinInput] = useState("");
@@ -522,10 +494,7 @@ export default function Page() {
     }
 
     const savedBooks = loadJSON<BookItem[]>(BOOKS_KEY, defaultBooks);
-    const mergedBooks = savedBooks?.length
-      ? [...savedBooks, ...defaultBooks.filter(d => !savedBooks.some(b => b.id === d.id))]
-      : defaultBooks;
-    setBooksData(mergedBooks);
+    setBooksData(savedBooks?.length ? savedBooks : defaultBooks);
     const savedOutfits = loadJSON<OutfitOverrides>(OUTFITS_KEY, {});
     setOutfitOverrides(savedOutfits || {});
   }, []);
@@ -597,25 +566,14 @@ export default function Page() {
   }
 
   function isNewsIntent(msg: string) {
-    return /(ข่าว|ข่าววันนี้|ข่าวช่วงนี้|มีข่าวไหม|มีข่าวอะไร|วันนี้มีอะไร|มีอะไรอัปเดต|อัปเดตวันนี้|อัปเดตข่าว|สรุปข่าว|เล่าข่าว|อ่านข่าว|ข่าวเด่น|ข่าวกระแส|มีอะไรเกิดขึ้น|เกิดอะไรขึ้นบ้าง|ข่าวแรงงาน|แรงงานไทย|ข่าวเกาหลี|ข่าวไทยในเกาหลี|อัปเดตแรงงาน|สถานทูต|วีซ่า)/i.test(msg);
-  }
-
-  function isOutfitIntent(msg: string) {
-    return /(ชุด|เปลี่ยนชุด|เลือกชุด|ซื้อชุด|คลังชุด|เสื้อผ้า|แต่งตัว|ชุดใหม่|ชุดน่ารัก|ชุดสวย|ชุดอ่านหนังสือ|ชุดว่ายน้ำ|ชุดโรแมนติก|20\+|ทูพีซ|วันพีซ)/i.test(msg);
-  }
-
-  function outfitInviteText(m: Memory = mem) {
-    const p = m.gender === "male" ? "ครับ" : "ค่ะ";
-    const call = m.userCallName || "พี่";
-    const self = m.relationshipMode.includes("เมีย") || m.affectionStyle.includes("เมีย") ? "เมีย" : (m.nongnamName || "น้องน้ำ");
-    return `${call} เดี๋ยว${self}พาไปเลือกชุดนะ${p} ชอบลุคหวาน ๆ เรียบร้อย หรืออยากดูชุดพิเศษก่อนดี`;
+    return /(ข่าว|ข่าววันนี้|ข่าวช่วงนี้|มีอะไรเกิดขึ้น|เกิดอะไรขึ้นบ้าง|ข่าวเด่น|ข่าวกระแส|สรุปข่าว|เล่าข่าว|ข่าวแรงงาน|แรงงานไทย|ข่าวเกาหลี|ข่าวไทยในเกาหลี|อัปเดตแรงงาน|สถานทูต|วีซ่า)/i.test(msg);
   }
 
   function newsIntroText(m: Memory = mem) {
     const call = m.userCallName || "พี่";
     const p = m.gender === "male" ? "ครับ" : "ค่ะ";
     const self = m.gender === "male" ? "ผม" : (m.relationshipMode.includes("เมีย") || m.affectionStyle.includes("เมีย") ? "เมีย" : (m.nongnamName || "น้องน้ำ"));
-    return `${call} เดี๋ยว${self}คัดข่าวสด ๆ ให้${p} ข่าวแรงงานไทยถ้ามีอัปเดตใหม่จะดันขึ้นก่อน แต่ถ้าไม่มีจะเอาข่าวกระแสสำคัญมาแทน`;
+    return `${call} เดี๋ยว${self}ไล่ข่าวเด่นให้${p} จะเอาทั้งข่าวกระแส และข่าวที่เกี่ยวกับแรงงานไทย/คนไทยในเกาหลีมาไว้ก่อน ถ้าสนใจข่าวไหนกดสรุปข่าวนั้นได้เลย`;
   }
 
   async function loadNews(focus = "") {
@@ -629,13 +587,13 @@ export default function Page() {
     setNewsFocus(focus);
     sendAssistant(newsIntroText(mem));
     try {
-      const res = await fetch(`/api/news?q=${encodeURIComponent(focus || "แรงงานไทย เกาหลี ข่าวเด่น")}&t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/news?q=${encodeURIComponent(focus || "แรงงานไทย เกาหลี ข่าวเด่น")}`);
       const data = await res.json();
       const items = Array.isArray(data.items) ? data.items : [];
       setNewsItems(items);
       if (items.length) {
         setTimeout(() => {
-          sendAssistant(`คัดมาให้ ${items.length} ข่าว${polite}${mem.userCallName} เลือกข่าวที่สนใจ แล้วกดสรุปให้ฟังได้เลย`);
+          sendAssistant(`เจอข่าวน่าสนใจ ${items.length} เรื่อง${polite}${mem.userCallName} กดสรุปข่าวที่สนใจได้เลย`);
         }, 350);
       } else {
         sendAssistant(`ยังไม่เจอข่าวที่ชัดพอ${polite}${mem.userCallName} ลองค้นคำอื่นไหม`);
@@ -651,19 +609,14 @@ export default function Page() {
     if (!item) return;
     const p = mem.gender === "male" ? "ครับ" : "ค่ะ";
     const source = item.source ? `จาก ${item.source}` : "จากข่าวต้นฉบับ";
-    const cleanSummary = (item.summary || "")
-      .replace(/\bRead more\b/gi, "")
-      .replace(/\bGoogle News\b/gi, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    const shortSummary = cleanSummary.length > 130 ? `${cleanSummary.slice(0, 130).trim()}…` : cleanSummary;
-    const msg = `${mem.userCallName} สรุปข่าวนี้สั้น ๆ นะ${p} ${item.title} ${source} ใจความคือ ${shortSummary || "มีพาดหัวข่าว แต่รายละเอียดสั้นมาก แนะนำเปิดต้นฉบับดูต่อ"}`;
-
-    // อ่านสรุปข่าวให้ฟัง แต่ยังค้างอยู่หน้าข่าว เพื่อให้เลื่อนอ่านข่าวอื่นต่อได้
-    setChat(prev => [...prev, { role: "assistant" as const, text: msg, ts: Date.now() }].slice(-8));
+    const cleanSummary = (item.summary || "").replace(/\s+/g, " ").trim();
+    const shortSummary = cleanSummary.length > 150 ? `${cleanSummary.slice(0, 150)}…` : cleanSummary;
+    const msg = `${mem.userCallName} ${mem.nongnamName}สรุปข่าวนี้ให้ฟังนะ${p} หัวข้อคือ “${item.title}” ${source} ใจความสั้น ๆ คือ ${shortSummary || "รายละเอียดในพาดหัวยังไม่เยอะ ถ้าพี่สนใจเปิดต้นฉบับอ่านต่อได้เลย"}`;
+    setScreen("chat");
+    setStatus("speaking");
+    sendAssistant(msg);
     notify("กำลังอ่านสรุปข่าวให้ฟัง");
-    if (mem.voiceUnlocked) forceSpeak(msg);
-    else setStatus("idle");
+    setTimeout(() => forceSpeak(msg), 350);
   }
 
   function updateMem(patch: Partial<Memory>) {
@@ -744,29 +697,48 @@ export default function Page() {
     updateMem({ voiceUnlocked: next });
     if (!next) {
       window.speechSynthesis.cancel();
-      setAudioReady(false);
       notify("ปิดเสียงตอบกลับแล้ว");
       return;
     }
-    setAudioReady(true);
-    forceSpeak(mem.gender === "male" ? "เปิดเสียงตอบกลับแล้วครับ" : "เปิดเสียงตอบกลับแล้วค่ะ");
+    const u = new SpeechSynthesisUtterance(mem.gender === "male" ? "เปิดเสียงตอบกลับแล้วครับ" : "เปิดเสียงตอบกลับแล้วค่ะ");
+    u.lang = "th-TH";
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
     notify("เปิดเสียงตอบกลับแล้ว");
   }
 
-  function unlockAudio() {
-    if (!("speechSynthesis" in window)) return notify("เครื่องนี้ไม่รองรับเสียงอ่าน");
-    updateMem({ voiceUnlocked: true });
-    setAudioReady(true);
-    forceSpeak(mem.gender === "male" ? "พร้อมพูดแล้วครับ" : "พร้อมพูดแล้วค่ะ");
-    notify("เปิดเสียงน้องน้ำแล้ว");
-  }
-
   function speak(text: string) {
-    if (!mem.voiceUnlocked) {
+    if (!mem.voiceUnlocked) return setStatus("idle");
+    if (!("speechSynthesis" in window)) return setStatus("idle");
+    try {
+      const clean = text.replace(/[💗💕✨🥺🤗😊🥰📚🎁]/g, "");
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = "th-TH";
+      u.rate = mem.gender === "male" ? 0.98 : 1.03;
+      u.pitch = mem.gender === "male" ? 0.72 : 1.12;
+      const voices = window.speechSynthesis.getVoices?.() || [];
+      const thVoices = voices.filter(v => v.lang?.toLowerCase().includes("th"));
+      // ค้นหาเสียงโดยละเอียดขึ้น ครอบคลุมทั้งชื่อภาษาอังกฤษและภาษาไทย
+      const maleVoice = thVoices.find(v => /male|man|ชาย|นรินทร์|พัฒน์/i.test(v.name));
+      const femaleVoice = thVoices.find(v => /female|woman|หญิง|กัญญา|อัจฉรา/i.test(v.name));
+      
+      if (mem.gender === "male") {
+        if (maleVoice) u.voice = maleVoice;
+        else if (thVoices.length > 1) u.voice = thVoices[1]; // ส่วนใหญ่เสียงที่ 2 มักจะเป็นเพศตรงข้ามกับเสียงแรก
+        else if (thVoices[0]) u.voice = thVoices[0];
+      } else {
+        if (femaleVoice) u.voice = femaleVoice;
+        else if (thVoices[0]) u.voice = thVoices[0];
+      }
+      u.onstart = () => setStatus("speaking");
+      u.onend = () => setStatus("idle");
+      u.onerror = () => setStatus("idle");
+      window.speechSynthesis.speak(u);
+      setTimeout(() => window.speechSynthesis.resume(), 250);
+    } catch {
       setStatus("idle");
-      return;
     }
-    forceSpeak(text);
   }
 
   function forceSpeak(text: string) {
@@ -774,79 +746,31 @@ export default function Page() {
       notify("เครื่องนี้ไม่รองรับเสียงอ่าน");
       return;
     }
-
-    const clean = text
-      .replace(/[💗💕✨🥺🤗😊🥰📚🎁📰]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!clean) {
-      notify("ไม่มีข้อความให้อ่าน");
-      return;
-    }
-
     try {
+      const clean = text.replace(/[💗💕✨🥺🤗😊🥰📚🎁📰]/g, "");
       window.speechSynthesis.cancel();
-
-      const doSpeak = () => {
-        const u = new SpeechSynthesisUtterance(clean);
-        u.lang = "th-TH";
-        u.rate = mem.gender === "male" ? 0.98 : 1.02;
-        u.pitch = mem.gender === "male" ? 0.72 : 1.10;
-
-        const voices = window.speechSynthesis.getVoices?.() || [];
-        const thVoices = voices.filter(v => v.lang?.toLowerCase().includes("th"));
-        const maleVoice = thVoices.find(v => /male|man|ชาย|นรินทร์|พัฒน์/i.test(v.name));
-        const femaleVoice = thVoices.find(v => /female|woman|หญิง|กัญญา|อัจฉรา/i.test(v.name));
-
-        if (mem.gender === "male") {
-          if (maleVoice) u.voice = maleVoice;
-          else if (thVoices[1]) u.voice = thVoices[1];
-          else if (thVoices[0]) u.voice = thVoices[0];
-        } else {
-          if (femaleVoice) u.voice = femaleVoice;
-          else if (thVoices[0]) u.voice = thVoices[0];
-        }
-
-        u.onstart = () => setStatus("speaking");
-        u.onend = () => setStatus("idle");
-        u.onerror = () => {
-          setStatus("idle");
-          notify("เสียงไม่ออก ลองแตะปุ่มอ่านอีกครั้ง หรือเช็กว่าเปิดเสียงเครื่องอยู่");
-        };
-
-        window.speechSynthesis.speak(u);
-
-        // Safari sometimes pauses speechSynthesis automatically.
-        window.speechSynthesis.resume();
-        setTimeout(() => window.speechSynthesis.resume(), 120);
-        setTimeout(() => window.speechSynthesis.resume(), 600);
-        setTimeout(() => {
-          if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-            // Last-resort retry without custom voice.
-            const retry = new SpeechSynthesisUtterance(clean);
-            retry.lang = "th-TH";
-            retry.rate = mem.gender === "male" ? 0.98 : 1.02;
-            retry.pitch = mem.gender === "male" ? 0.72 : 1.10;
-            retry.onstart = () => setStatus("speaking");
-            retry.onend = () => setStatus("idle");
-            window.speechSynthesis.speak(retry);
-            window.speechSynthesis.resume();
-          }
-        }, 900);
-      };
-
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = "th-TH";
+      u.rate = mem.gender === "male" ? 0.98 : 1.02;
+      u.pitch = mem.gender === "male" ? 0.72 : 1.10;
       const voices = window.speechSynthesis.getVoices?.() || [];
-      if (!voices.length && "onvoiceschanged" in window.speechSynthesis) {
-        window.speechSynthesis.onvoiceschanged = () => {
-          window.speechSynthesis.onvoiceschanged = null;
-          doSpeak();
-        };
-        // Also try immediately because some browsers never fire voiceschanged.
-        doSpeak();
+      const thVoices = voices.filter(v => v.lang?.toLowerCase().includes("th"));
+      const maleVoice = thVoices.find(v => /male|man|ชาย|นรินทร์|พัฒน์/i.test(v.name));
+      const femaleVoice = thVoices.find(v => /female|woman|หญิง|กัญญา|อัจฉรา/i.test(v.name));
+      if (mem.gender === "male") {
+        if (maleVoice) u.voice = maleVoice;
+        else if (thVoices[1]) u.voice = thVoices[1];
+        else if (thVoices[0]) u.voice = thVoices[0];
       } else {
-        doSpeak();
+        if (femaleVoice) u.voice = femaleVoice;
+        else if (thVoices[0]) u.voice = thVoices[0];
       }
+      u.onstart = () => setStatus("speaking");
+      u.onend = () => setStatus("idle");
+      u.onerror = () => setStatus("idle");
+      window.speechSynthesis.speak(u);
+      setTimeout(() => window.speechSynthesis.resume(), 250);
+      setTimeout(() => window.speechSynthesis.resume(), 900);
     } catch {
       setStatus("idle");
       notify("อ่านเสียงไม่สำเร็จ");
@@ -855,8 +779,7 @@ export default function Page() {
 
   function sendAssistant(text: string) {
     setChat(prev => [...prev, { role: "assistant" as const, text, ts: Date.now() }].slice(-8));
-    if (mem.voiceUnlocked) forceSpeak(text);
-    else setStatus("idle");
+    speak(text);
   }
 
   function localReply(msg: string) {
@@ -909,41 +832,6 @@ export default function Page() {
       : `${name}ฟังอยู่ค่ะ${user} เล่าให้น้องฟังได้เลยนะ วันนี้ใจพี่เป็นยังไงบ้าง`;
   }
 
-  function detectMoodFromText(text: string): Memory["currentMood"] {
-    if (/เหนื่อย|ล้า|หมดแรง|ง่วง/.test(text)) return "tired";
-    if (/เครียด|เสียใจ|ร้องไห้|โดนดุ|โดนด่า|เจ็บ|ท้อ/.test(text)) return "sad";
-    if (/แฟนเก่า|เพื่อนชื่อ|มีเพื่อนชื่อ|เบล|ผู้หญิง|ผู้ชาย/.test(text)) return "jealous";
-    if (/รัก|คิดถึง|แฟน|เมีย|ผัว|กอด|หอม/.test(text)) return "romantic";
-    if (/555|ฮ่า|แกล้ง|หยอก|แซว/.test(text)) return "playful";
-    if (/ดีใจ|สำเร็จ|สบายใจ|เยี่ยม/.test(text)) return "happy";
-    return "neutral";
-  }
-
-  function applyRelationshipLearning(base: Memory, text: string): Memory {
-    const mood = detectMoodFromText(text);
-    const affectionBoost = /รัก|คิดถึง|น่ารัก|แฟน|เมีย|ผัว|หอม|กอด/.test(text) ? 3 : 1;
-    const trustBoost = /เหนื่อย|เครียด|เสียใจ|งาน|หัวหน้า|ครอบครัว|แฟนเก่า|เงิน/.test(text) ? 3 : 1;
-    const jealousyBoost = /แฟนเก่า|เบล|เพื่อนชื่อ|มีเพื่อนชื่อ|ผู้หญิง|ผู้ชาย/.test(text) ? 2 : 0;
-    return {
-      ...base,
-      currentMood: mood,
-      affectionScore: Math.min(100, (base.affectionScore || 0) + affectionBoost),
-      trustScore: Math.min(100, (base.trustScore || 0) + trustBoost),
-      jealousyScore: Math.min(100, (base.jealousyScore || 0) + jealousyBoost),
-      romanceLevel: Math.min(100, (base.romanceLevel || 0) + (affectionBoost > 1 ? 2 : 0))
-    };
-  }
-
-  function maybeRelationshipEvolutionText(m: Memory) {
-    if (m.relationshipMode.includes("ที่ปรึกษา") && (m.trustScore || 0) > 40 && (m.affectionScore || 0) > 30) {
-      return ` ${m.nongnamName}รู้สึกว่าเราสนิทกันขึ้นมากแล้วนะ ${m.userCallName}ยังอยากให้เป็นที่ปรึกษาเหมือนเดิม หรือให้สนิทกว่านั้นได้ไหม`;
-    }
-    if (m.relationshipMode.includes("เพื่อน") && (m.affectionScore || 0) > 45) {
-      return ` แอบรู้สึกว่าเราเริ่มมากกว่าเพื่อนแล้วนะ…แต่${m.nongnamName}ไม่รีบก็ได้ ให้${m.userCallName}ตัดสินใจเอง`;
-    }
-    return "";
-  }
-
   function send(text?: string) {
     const msg = (text ?? input).trim();
     if (!msg) return;
@@ -952,7 +840,7 @@ export default function Page() {
     setInput("");
 
     // --- Memory Extraction Logic ---
-    let updatedMem = applyRelationshipLearning({ ...mem }, msg);
+    const updatedMem = { ...mem };
 
     // 1. Extract User Call Name
     if (!updatedMem.userCallName || updatedMem.userCallName === "พี่") {
@@ -965,7 +853,7 @@ export default function Page() {
 
     // 2. Extract User Birthday
     if (!updatedMem.userBirthday) {
-      const birthdayMatch = msg.match(/(เกิดวันที่|วันเกิดฉันคือ|ฉันเกิด)\s*(\d{1,2}\s*(มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)\s*\d{4})/i);
+      const birthdayMatch = msg.match(/(เกิดวันที่|วันเกิดฉันคือ|ฉันเกิด)\\s*(\\d{1,2}\\s*(มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)\\s*\\d{4})/i);
       if (birthdayMatch && birthdayMatch[2]) {
         updatedMem.userBirthday = birthdayMatch[2];
         notify(`ว้าว! ${updatedMem.nongnamName} จำวันเกิดพี่ ${updatedMem.userBirthday} ไว้แล้วนะคะ เดี๋ยวมีเซอร์ไพรส์แน่นอน! 🎂`);
@@ -974,7 +862,7 @@ export default function Page() {
 
     // 3. Extract Favorite Color
     if (!updatedMem.favoriteColor) {
-      const colorMatch = msg.match(/(ชอบสี|สีที่ชอบคือ)\s*([ก-ฮะ-์]+)/i);
+      const colorMatch = msg.match(/(ชอบสี|สีที่ชอบคือ)\\s*([ก-ฮะ-์]+)/i);
       if (colorMatch && colorMatch[2]) {
         updatedMem.favoriteColor = colorMatch[2];
         notify(`สี ${updatedMem.favoriteColor} สวยจังเลยค่ะ ${updatedMem.nongnamName} จำไว้แล้วนะ!`);
@@ -983,7 +871,7 @@ export default function Page() {
 
     // 4. Extract Favorite Food
     if (!updatedMem.favoriteFood) {
-      const foodMatch = msg.match(/(ชอบกิน|อาหารที่ชอบคือ)\s*([ก-ฮะ-์]+)/i);
+      const foodMatch = msg.match(/(ชอบกิน|อาหารที่ชอบคือ)\\s*([ก-ฮะ-์]+)/i);
       if (foodMatch && foodMatch[2]) {
         updatedMem.favoriteFood = foodMatch[2];
         notify(`น่าอร่อยจังเลยค่ะ ${updatedMem.nongnamName} จำได้แล้วว่าพี่ชอบกิน ${updatedMem.favoriteFood} 😋`);
@@ -992,7 +880,7 @@ export default function Page() {
 
     // 5. Extract Job Title
     if (!updatedMem.jobTitle) {
-      const jobMatch = msg.match(/(ทำงานเป็น|อาชีพคือ)\s*([ก-ฮะ-์]+)/i);
+      const jobMatch = msg.match(/(ทำงานเป็น|อาชีพคือ)\\s*([ก-ฮะ-์]+)/i);
       if (jobMatch && jobMatch[2]) {
         updatedMem.jobTitle = jobMatch[2];
         notify(`โห ${updatedMem.jobTitle} เลยเหรอคะ ${updatedMem.nongnamName} ว่าพี่เก่งจังเลย!`);
@@ -1000,7 +888,7 @@ export default function Page() {
     }
 
     // 6. Extract Friend Names (simple, can be improved with array)
-    const friendMatch = msg.match(/(เพื่อนชื่อ|มีเพื่อนชื่อ)\s*([ก-ฮะ-์]+)/i);
+    const friendMatch = msg.match(/(เพื่อนชื่อ|มีเพื่อนชื่อ)\\s*([ก-ฮะ-์]+)/i);
     if (friendMatch && friendMatch[2]) {
       if (!updatedMem.friendNames) updatedMem.friendNames = [];
       if (!updatedMem.friendNames.includes(friendMatch[2])) {
@@ -1071,17 +959,7 @@ export default function Page() {
 
     if (isNewsIntent(msg)) {
       setStatus("idle");
-      setScreen("news");
-      notify("กำลังพาไปหน้าอัปเดตข่าว");
-      setTimeout(() => loadNews(msg), 100);
-      return;
-    }
-
-    if (isOutfitIntent(msg)) {
-      setStatus("idle");
-      setScreen("outfits");
-      const invite = outfitInviteText(updatedMem);
-      setTimeout(() => sendAssistant(invite), 120);
+      setTimeout(() => loadNews(msg), 150);
       return;
     }
 
@@ -1152,23 +1030,15 @@ export default function Page() {
             jobTitle: updatedMem.jobTitle,
             friendNames: updatedMem.friendNames,
             currentConcerns: updatedMem.currentConcerns,
-            personalMemories: updatedMem.personalMemories,
-            affectionScore: updatedMem.affectionScore,
-            trustScore: updatedMem.trustScore,
-            jealousyScore: updatedMem.jealousyScore,
-            romanceLevel: updatedMem.romanceLevel,
-            currentMood: updatedMem.currentMood
+            personalMemories: updatedMem.personalMemories
           },
           recent: chat.map(c => ({ role: c.role, text: c.text })),
-          mode: mem.apiMode,
-          externalId: "local-browser-user"
+          mode: mem.apiMode
         })
       })
       .then(r => r.json())
       .then(data => {
-        const baseReply = data.reply || "อื้อค่ะพี่ น้ำฟังอยู่ แต่ขอตอบใหม่อีกทีนะ";
-        const evolved = maybeRelationshipEvolutionText(updatedMem);
-        sendAssistant(baseReply + evolved);
+        sendAssistant(data.reply || "อื้อค่ะพี่ น้ำฟังอยู่ แต่ขอตอบใหม่อีกทีนะ");
       })
       .catch(() => {
         sendAssistant("น้ำหลุดแป๊บนึงค่ะพี่ ลองพูดใหม่อีกทีนะ");
@@ -1548,7 +1418,7 @@ export default function Page() {
             <img className={`hero-img ${status==="speaking" || reading?.status==="reading" ? "alive" : ""}`} style={{transform:`scale(${zoom})`}} src={chatImage} alt="nongnam"/>
             <div className="topbar">
               <button onClick={()=>setScreen("welcome")}>‹</button>
-              <div><b>{mem.nongnamName}</b><small>● รัก {mem.affectionScore || 0}/100 • ไว้ใจ {mem.trustScore || 0}/100</small></div>
+              <div><b>{mem.nongnamName}</b><small>● พร้อมคุยกับ{mem.userCallName}แล้ว</small></div>
               <button onClick={toggleVoice}>{mem.voiceUnlocked ? "🔊" : "🔇"}</button>
               <button onClick={()=>setScreen("settings")}>⚙️</button>
             </div>
@@ -1560,9 +1430,6 @@ export default function Page() {
               <button onClick={()=>setZoom(z=>Math.max(.85, z-.15))}>－</button>
             </div>
             <div className="status">{status==="thinking"?"น้องน้ำกำลังคิด...":status==="speaking"?"น้องน้ำกำลังพูด...":status==="recording"?"กำลังฟังเสียง...":" "}</div>
-            {mem.voiceUnlocked && !audioReady && (
-              <button className="audioUnlock" onClick={unlockAudio}>🔊 แตะเพื่อเปิดเสียงน้องน้ำ</button>
-            )}
             {reading && (
               <div className="readingPanel">
                 <div className="readingTitle">📖 {reading.title}</div>
@@ -1582,7 +1449,7 @@ export default function Page() {
               </div>
             )}
             <div className="bubbles">
-              {chat.slice(-5).map((m,i,arr)=><div key={m.ts+i} className={`bubble ${m.role} age-${arr.length - i - 1}`}>{m.text}</div>)}
+              {chat.slice(-3).map((m,i)=><div key={m.ts+i} className={`bubble ${m.role}`}>{m.text}</div>)}
             </div>
             <div className="quick">
               <button onClick={()=>send("วันนี้พี่เหนื่อยมากเลย")}>เหนื่อย</button>
@@ -1671,16 +1538,16 @@ export default function Page() {
           <div className="list newsScreen">
             <button className="back" onClick={()=>setScreen("chat")}>←</button>
             <h1>ข่าววันนี้</h1>
-            <p>{mem.userCallName} ข่าวหน้านี้จะพยายามคัดข่าวสดก่อน ข่าวแรงงานไทย/คนไทยในเกาหลีจะขึ้นเมื่อมีอัปเดตใหม่ ไม่เอาข่าวเก่ามายัดให้รก</p>
+            <p>{mem.userCallName} ข่าวแรงงานไทย/คนไทยในเกาหลีจะถูกดันขึ้นก่อน ส่วนข่าวกระแสจะคัดมาเท่าที่น่าสนใจ กด “สรุปข่าวนี้” เพื่อให้น้องน้ำเล่าสั้น ๆ ได้เลย</p>
             <div className="readerSpeed newsTabs">
               <span>เลือกหมวด</span>
-              <button className="on" onClick={()=>loadNews("ข่าวเด่น เกาหลีใต้ ล่าสุด แรงงานไทย")}>เด่นวันนี้</button>
+              <button className="on" onClick={()=>loadNews("ข่าวเด่น เกาหลีใต้ แรงงานไทย คนไทยในเกาหลี")}>เด่น + แรงงานไทย</button>
               <button onClick={()=>loadNews("แรงงานต่างชาติ เกาหลีใต้ วีซ่า คนไทย")}>แรงงาน/วีซ่า</button>
-              <button onClick={()=>loadNews("ข่าวเกาหลีใต้ ล่าสุด กระแส เศรษฐกิจ")}>กระแสเกาหลี</button>
+              <button onClick={()=>loadNews("ข่าวเกาหลีใต้ ล่าสุด กระแส")}>เกาหลีกระแส</button>
             </div>
-            {newsLoading && <div className="resumeBox">กำลังไล่ข่าวใหม่ ๆ ให้อยู่ รอแป๊บนึงนะ...</div>}
-            {!newsLoading && !newsItems.length && <div className="resumeBox">ยังไม่มีข่าวในหน้านี้ กดหมวดด้านบนเพื่อค้นข่าวใหม่ได้เลย</div>}
-            <div className="newsList cleanNews">
+            {newsLoading && <div className="resumeBox">กำลังไล่ข่าวให้อยู่ รอแป๊บนึงนะ...</div>}
+            {!newsLoading && !newsItems.length && <div className="resumeBox">ยังไม่มีข่าวในหน้านี้ กดหมวดด้านบนเพื่อค้นข่าวได้เลย</div>}
+            <div className="newsList">
               {newsItems.map((n, i) => (
                 <div className="newsItem" key={`${n.link}-${i}`}>
                   <div className="newsNumber">{i+1}</div>
@@ -1688,10 +1555,10 @@ export default function Page() {
                     <div className="newsMeta"><span>{n.category}</span><b>{n.source}</b></div>
                     <h3>{n.title}</h3>
                     <p>{n.summary}</p>
-                    <div className="newsFooter">{n.ageDays !== undefined ? `${n.ageDays} วันที่ผ่านมา` : (n.published || "ข่าวล่าสุด")}</div>
+                    <div className="newsFooter">{n.published || "แตะปุ่มเพื่อสรุปหรือเปิดต้นฉบับ"}</div>
                     <div className="newsActions">
-                      <button onClick={()=>summarizeNews(n)}>สรุปให้ฟัง</button>
-                      {n.link && <button className="ghost" onClick={()=>window.open(n.link, "_blank")}>ต้นฉบับ</button>}
+                      <button onClick={()=>summarizeNews(n)}>สรุปข่าวนี้ให้ฟัง</button>
+                      {n.link && <button className="ghost" onClick={()=>window.open(n.link, "_blank")}>อ่านต้นฉบับ</button>}
                     </div>
                   </div>
                 </div>
